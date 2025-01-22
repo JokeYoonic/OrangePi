@@ -4,7 +4,7 @@
 #include <pthread.h>
 #include <stdint.h>
 
-#define AM2302_PIN        2      // 数据引脚 GPIO2
+#define AM2302_PIN        2      // 使用 wPi 编号2（物理引脚7）
 #define RESPONSE_TIMEOUT  1000   // 响应超时时间（微秒）
 #define DATA_BITS         40     // 数据位数（40位）
 
@@ -25,6 +25,7 @@ void sendStartSignal() {
     delay(2);                    // 低电平至少1ms（手册要求1-20ms）
     digitalWrite(AM2302_PIN, HIGH);
     pinMode(AM2302_PIN, INPUT);
+    pullUpDnControl(AM2302_PIN, PUD_UP); // 启用内部上拉电阻
     delayMicroseconds(30);       // 等待传感器响应
 }
 
@@ -98,6 +99,7 @@ int main(void) {
     pthread_t tid;
     uint32_t waitTime;
 
+    // 初始化 wiringPi（使用 wPi 编号）
     if (wiringPiSetup() == -1) {
         printf("GPIO init failed!\n");
         exit(1);
