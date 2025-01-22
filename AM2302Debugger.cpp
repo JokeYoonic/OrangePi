@@ -40,10 +40,10 @@ uint8_t Read_Byte(void) {
 uint8_t Read_AM2302(AM2302_Data_TypeDef *AM2302_Data) {
     pinMode(AM2302_PIN, OUTPUT);  // 设置GPIO为输出模式
     digitalWrite(AM2302_PIN, LOW);  // 主机拉低
-    delay(2);  // 延时2ms
+    delay(1);  // 延时1ms，符合Tbe的最小要求
 
     digitalWrite(AM2302_PIN, HIGH);  // 总线拉高
-    delayMicroseconds(30);  // 延时30us
+    delayMicroseconds(30);  // 延时30us，符合Tgo的典型值
 
     pinMode(AM2302_PIN, INPUT);  // 设置GPIO为输入模式
 
@@ -95,7 +95,7 @@ int main(void) {
             printf("Read AM2302 ERROR!\r\n");
         }
 
-        delay(2000);  // 延时2秒
+        delay(2000);  // 延时2秒，符合两次读取间隔时间最小为2S的要求
     }
 
     return 0;
