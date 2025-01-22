@@ -3,113 +3,100 @@
 #include <wiringPi.h>
 #include <stdint.h>
 
-#define DHT_PIN        2      // 使用wPi编号2（物理引脚7）
-#define RETRY_TIMES    5      // 最大重试次数
-#define DATA_BITS      40     // 数据总位数（40位）
+#define AM2302_PIN 7  // 假设AM2302连接到GPIO7
 
-uint8_t data[5];              // 存储40位数据（湿度高8、低8，温度高8、低8，校验）
+typedef struct {
+    uint8_t humi_int;      // 湿度的整数部分
+    uint8_t humi_deci;     // 湿度的小数部分
+    uint8_t temp_int;      // 温度的整数部分
+    uint8_t temp_deci;     // 温度的小数部分
+    uint8_t check_sum;     // 校验和
+} AM2302_Data_TypeDef;
 
-// 微秒级延时（Orange Pi需使用系统级延时）
-void delay_us(uint32_t us) {
-    delayMicroseconds(us);
+void AM2302_GPIO_Config(void) {
+    wiringPiSetup();  // 初始化WiringPi
+    pinMode(AM2302_PIN, OUTPUT);  // 设置GPIO为输出模式
+    digitalWrite(AM2302_PIN, HIGH);  // 拉高GPIO
 }
 
-// 毫秒级延时
-void delay_ms(uint32_t ms) {
-    delay(ms);
-}
+uint8_t Read_Byte(void) {
+    uint8_t i, temp = 0;
 
-// 初始化GPIO
-void DHT_Init() {
-    pinMode(DHT_PIN, OUTPUT);
-    digitalWrite(DHT_PIN, HIGH);
-    delay_ms(2000);  // 传感器上电稳定
-}
+    for (i = 0; i < 8; i++) {
+        while (digitalRead(AM2302_PIN) == LOW);  // 等待高电平开始
 
-// 读取传感器数据（返回0成功，-1失败）
-int DHT_Read() {
-    uint8_t retry = 0;
-    uint8_t i, j;
+        delayMicroseconds(30);  // 延时30us
 
-    // 发送起始信号：拉低至少18ms，再拉高20us
-    digitalWrite(DHT_PIN, LOW);
-    delay_ms(18);
-    digitalWrite(DHT_PIN, HIGH);
-    delay_us(20);
-
-    // 切换为输入模式，等待传感器响应
-    pinMode(DHT_PIN, INPUT);
-    pullUpDnControl(DHT_PIN, PUD_UP);
-
-    // 等待传感器拉低80us
-    while (digitalRead(DHT_PIN) == HIGH) {
-        if (retry++ > RETRY_TIMES) return -1;
-        delay_us(1);
-    }
-    retry = 0;
-    // 等待传感器释放总线（80us低电平 + 80us高电平）
-    while (digitalRead(DHT_PIN) == LOW) {
-        if (retry++ > RETRY_TIMES) return -1;
-        delay_us(1);
-    }
-    retry = 0;
-    while (digitalRead(DHT_PIN) == HIGH) {
-        if (retry++ > RETRY_TIMES) return -1;
-        delay_us(1);
-    }
-
-    // 读取40位数据
-    for (i = 0; i < 5; i++) {
-        data[i] = 0;
-        for (j = 0; j < 8; j++) {
-            // 等待数据位起始低电平（50us）
-            while (digitalRead(DHT_PIN) == HIGH);
-            while (digitalRead(DHT_PIN) == LOW);
-
-            // 延时40us后检测高电平时间
-            delay_us(40);
-            if (digitalRead(DHT_PIN) == HIGH) {
-                data[i] |= (1 << (7 - j));  // 高位在前
-                // 等待剩余高电平时间（逻辑1为70us）
-                while (digitalRead(DHT_PIN) == HIGH);
-            }
+        if (digitalRead(AM2302_PIN) == HIGH) {  // 60us后仍为高电平表示数据“1”
+            while (digitalRead(AM2302_PIN) == HIGH);  // 等待高电平结束
+            temp |= (uint8_t)(0x01 << (7 - i));  // 把第7-i位置1
+        } else {  // 60us后为低电平表示数据“0”
+            temp &= (uint8_t) ~(0x01 << (7 - i));  // 把第7-i位置0
         }
     }
-
-    // 校验数据
-    if (data[4] != (data[0] + data[1] + data[2] + data[3])) {
-        return -1;
-    }
-    return 0;
+    return temp;
 }
 
-// 打印温湿度数据
-void DHT_Print() {
-    float humidity = (data[0] * 256.0 + data[1]) / 10.0;
-    float temperature = ((data[2] & 0x7F) * 256.0 + data[3]) / 10.0;
-    if (data[2] & 0x80) temperature = -temperature;
+uint8_t Read_AM2302(AM2302_Data_TypeDef *AM2302_Data) {
+    pinMode(AM2302_PIN, OUTPUT);  // 设置GPIO为输出模式
+    digitalWrite(AM2302_PIN, LOW);  // 主机拉低
+    delay(2);  // 延时2ms
 
-    printf("------------------------\n");
-    printf("湿度: %.1f%%RH\n", humidity);
-    printf("温度: %.1f℃\n", temperature);
-    printf("------------------------\n");
+    digitalWrite(AM2302_PIN, HIGH);  // 总线拉高
+    delayMicroseconds(30);  // 延时30us
+
+    pinMode(AM2302_PIN, INPUT);  // 设置GPIO为输入模式
+
+    if (digitalRead(AM2302_PIN) == LOW) {  // 判断从机是否有低电平响应信号
+        while (digitalRead(AM2302_PIN) == LOW);  // 等待从机发出的80us低电平响应信号结束
+        while (digitalRead(AM2302_PIN) == HIGH);  // 等待从机发出的80us高电平标置信号结束
+
+        AM2302_Data->humi_int = Read_Byte();
+        AM2302_Data->humi_deci = Read_Byte();
+        AM2302_Data->temp_int = Read_Byte();
+        AM2302_Data->temp_deci = Read_Byte();
+        AM2302_Data->check_sum = Read_Byte();
+
+        pinMode(AM2302_PIN, OUTPUT);  // 读取结束，引脚改为输出模式
+        digitalWrite(AM2302_PIN, HIGH);  // 主机拉高
+
+        // 检查读取的数据是否正确
+        if (AM2302_Data->check_sum == AM2302_Data->humi_int + AM2302_Data->humi_deci + AM2302_Data->temp_int + AM2302_Data->temp_deci) {
+            return 1;  // 成功
+        } else {
+            return 0;  // 失败
+        }
+    } else {
+        return 0;  // 失败
+    }
 }
 
-int main() {
-    if (wiringPiSetup() == -1) {
-        printf("GPIO初始化失败！\n");
-        return -1;
-    }
+int main(void) {
+    AM2302_Data_TypeDef AM2302_Data;
+    unsigned int RH_Value, TEMP_Value;
+    unsigned char RH_H, RH_L, TP_H, TP_L;
 
-    DHT_Init();
+    AM2302_GPIO_Config();  // AM2302管脚初始化
 
     while (1) {
-        if (DHT_Read() == 0) {
-            DHT_Print();
+        if (Read_AM2302(&AM2302_Data) == 1) {
+            // 计算出实际湿度值的10倍
+            RH_Value = AM2302_Data.humi_int * 256 + AM2302_Data.humi_deci;
+            RH_H = RH_Value / 10;
+            RH_L = RH_Value % 10;
+
+            // 计算出实际温度值的10倍
+            TEMP_Value = AM2302_Data.temp_int * 256 + AM2302_Data.temp_deci;
+            TP_H = TEMP_Value / 10;
+            TP_L = TEMP_Value % 10;
+
+            printf("\r\n读取AM2302成功!\r\n\r\n湿度为%d.%d ％RH，温度为 %d.%d℃ \r\n", RH_H, RH_L, TP_H, TP_L);
         } else {
-            printf("传感器读取失败，请检查连接！\n");
+            printf("Read AM2302 ERROR!\r\n");
         }
-        delay_ms(2000);  // 间隔至少2秒
+
+        delay(2000);  // 延时2秒
     }
+
     return 0;
 }
