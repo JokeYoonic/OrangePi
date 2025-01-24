@@ -125,12 +125,55 @@ uint8_t Read_AM2302(AM2302_Data_TypeDef *AM2302_Data) {
     }
 }
 
+// 获取当前时间戳
+void get_timestamp(char *timestamp, size_t size) {
+    FILE *fp;
+    char buffer[64];
+
+    // 使用系统命令获取时间戳
+    fp = popen("date '+%Y-%m-%d %H:%M:%S'", "r");
+    if (fp == NULL) {
+        printf("DEBUG: Failed to get timestamp.\n");
+        return;
+    }
+
+    // 读取命令输出
+    if (fgets(buffer, sizeof(buffer), fp) != NULL) {
+        // 去掉换行符
+        buffer[strcspn(buffer, "\n")] = '\0';
+        snprintf(timestamp, size, "%s", buffer);
+    }
+
+    pclose(fp);
+}
+
+// 保存数据到 CSV 文件
+void save_to_csv(const char *timestamp, float humidity, float temperature) {
+    FILE *file = fopen("sensor_data.csv", "a");  // 以追加模式打开文件
+    if (file == NULL) {
+        printf("DEBUG: Failed to open file for writing.\n");
+        return;
+    }
+
+    // 如果是第一次写入，添加 CSV 文件头
+    if (ftell(file) == 0) {
+        fprintf(file, "Timestamp,Humidity (%%RH),Temperature (℃)\n");
+    }
+
+    // 写入时间戳和传感器数据
+    fprintf(file, "%s,%.1f,%.1f\n", timestamp, humidity, temperature);
+    fclose(file);
+
+    printf("DEBUG: Data saved to CSV file.\n");
+}
+
 int main(void) {
     AM2302_Data_TypeDef AM2302_Data;
     unsigned int RH_Value, TEMP_Value;
     unsigned char RH_H, RH_L, TP_H, TP_L;
     int retry_count = 0;
     const int max_retries = 5;  // 最大重试次数
+    char timestamp[20];  // 用于存储时间戳
 
     printf("DEBUG: Initializing AM2302 GPIO configuration...\n");
     AM2302_GPIO_Config();  // AM2302 管脚初始化
@@ -145,13 +188,22 @@ int main(void) {
             RH_Value = AM2302_Data.humi_int * 256 + AM2302_Data.humi_deci;
             RH_H = RH_Value / 10;
             RH_L = RH_Value % 10;
+            float humidity = RH_H + (float)RH_L / 10.0;
 
             // 计算出实际温度值的 10 倍
             TEMP_Value = AM2302_Data.temp_int * 256 + AM2302_Data.temp_deci;
             TP_H = TEMP_Value / 10;
             TP_L = TEMP_Value % 10;
+            float temperature = TP_H + (float)TP_L / 10.0;
 
+            // 获取当前时间戳
+            get_timestamp(timestamp, sizeof(timestamp));
+
+            // 打印传感器数据
             printf("\r\n读取AM2302成功!\r\n\r\n湿度为%d.%d ％RH，温度为 %d.%d℃ \r\n", RH_H, RH_L, TP_H, TP_L);
+
+            // 保存数据到 CSV 文件
+            save_to_csv(timestamp, humidity, temperature);
         } else {
             retry_count++;
             printf("Read AM2302 ERROR! Retry count: %d\n", retry_count);
